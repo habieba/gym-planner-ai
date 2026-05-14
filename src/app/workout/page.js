@@ -2,40 +2,91 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { getExerciseById } from "@/lib/exerciseHelpers";
+import {
+  getExerciseById,
+  getTopAlternateExercises,
+} from "@/lib/exerciseHelpers";
+import { getOnboardingData } from "@/lib/onboardingStorage";
+import {
+  ACTIVE_WORKOUT_KEY,
+  isTodayOrPast,
+  removeWorkoutRecord,
+  saveWorkoutRecord,
+  updateLegacyScheduledWorkout,
+  updateTemplateWorkoutExercises,
+} from "@/lib/scheduleStorage";
+import {
+  applyProgressionSuggestion,
+  dismissProgressionSuggestion,
+  getExerciseTargetText,
+  normalizePlannedExercise,
+  recalculateProgressionFromLogs,
+  updateExerciseProgression,
+} from "@/lib/progressionHelpers";
 
-const ACTIVE_WORKOUT_KEY = "gym_active_workout";
-const SCHEDULE_STORAGE_KEY = "gym_scheduled_workouts";
 const WORKOUT_LOGS_KEY = "gym_workout_logs";
 
 export default function WorkoutPage() {
-    const [workout, setWorkout] = useState(null);
-    const [openDetailsId, setOpenDetailsId] = useState(null);
-    const [openAlternatesId, setOpenAlternatesId] = useState(null);
-    const [previewAlternateId, setPreviewAlternateId] = useState(null);
-    const [notes, setNotes] = useState("");
+  const [workout, setWorkout] = useState(null);
+  const [profile, setProfile] = useState({});
+  const [openDetailsId, setOpenDetailsId] = useState(null);
+  const [openAlternatesId, setOpenAlternatesId] = useState(null);
+  const [previewAlternateId, setPreviewAlternateId] = useState(null);
+  const [notes, setNotes] = useState("");
+  const [exerciseCompletions, setExerciseCompletions] = useState({});
 
   useEffect(() => {
     const savedWorkout = localStorage.getItem(ACTIVE_WORKOUT_KEY);
+    const savedProfile = getOnboardingData();
+    const timeoutId = window.setTimeout(() => {
+      setProfile(savedProfile);
 
-    if (savedWorkout) {
-      setWorkout(JSON.parse(savedWorkout));
-    }
+      if (savedWorkout) {
+        const parsedWorkout = JSON.parse(savedWorkout);
+        const normalizedExercises = parsedWorkout.exercises.map((exercise) =>
+          normalizePlannedExercise(exercise)
+        );
+        setWorkout({
+          ...parsedWorkout,
+          exercises: normalizedExercises,
+        });
+        setExerciseCompletions(
+          Object.fromEntries(
+            normalizedExercises.map((exercise) => [
+              exercise.exerciseId,
+              Boolean(
+                parsedWorkout.exerciseCompletions?.find(
+                  (item) => item.exerciseId === exercise.exerciseId
+                )?.completed
+              ),
+            ])
+          )
+        );
+      }
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
   }, []);
 
   function saveUpdatedWorkout(updatedWorkout) {
     setWorkout(updatedWorkout);
     localStorage.setItem(ACTIVE_WORKOUT_KEY, JSON.stringify(updatedWorkout));
+    updateLegacyScheduledWorkout(updatedWorkout);
+  }
 
-    const savedSchedule = JSON.parse(
-      localStorage.getItem(SCHEDULE_STORAGE_KEY) || "[]"
+  function updateWorkoutExercises(updater) {
+    if (!workout) return;
+
+    const updatedExercises = updater(workout.exercises).map((exercise) =>
+      normalizePlannedExercise(exercise)
     );
+    const updatedWorkout = {
+      ...workout,
+      exercises: updatedExercises,
+    };
 
-    const updatedSchedule = savedSchedule.map((scheduledWorkout) =>
-      scheduledWorkout.id === updatedWorkout.id ? updatedWorkout : scheduledWorkout
-    );
-
-    localStorage.setItem(SCHEDULE_STORAGE_KEY, JSON.stringify(updatedSchedule));
+    updateTemplateWorkoutExercises(workout.id, () => updatedExercises);
+    saveUpdatedWorkout(updatedWorkout);
   }
 
   function chooseAlternateExercise(exerciseIndex, alternateExerciseId) {
@@ -55,66 +106,159 @@ export default function WorkoutPage() {
       exercises: updatedExercises,
     };
   
+    updateTemplateWorkoutExercises(workout.id, () => updatedExercises);
     saveUpdatedWorkout(updatedWorkout);
     setOpenAlternatesId(null);
     setOpenDetailsId(null);
     setPreviewAlternateId(null);
   }
 
-  function markWorkoutCompleted() {
+  function getWorkoutLogs() {
+    try {
+      return JSON.parse(localStorage.getItem(WORKOUT_LOGS_KEY) || "[]");
+    } catch {
+      return [];
+    }
+  }
+
+  function saveWorkoutLogs(logs) {
+    localStorage.setItem(WORKOUT_LOGS_KEY, JSON.stringify(logs));
+  }
+
+  function getExerciseCompletionList(exercises = workout?.exercises || []) {
+    return exercises.map((plannedExercise) => ({
+      exerciseId: plannedExercise.exerciseId,
+      completed: Boolean(exerciseCompletions[plannedExercise.exerciseId]),
+    }));
+  }
+
+  function toggleExerciseCompleted(exerciseId) {
+    setExerciseCompletions((current) => ({
+      ...current,
+      [exerciseId]: !current[exerciseId],
+    }));
+  }
+
+  function completeWorkout() {
     if (!workout) return;
+    if (!isTodayOrPast(workout.date)) return;
 
     const completedAt = new Date().toISOString();
+    const exerciseCompletionList = getExerciseCompletionList();
+    const updatedExercises = workout.exercises.map((plannedExercise) =>
+      updateExerciseProgression(
+        plannedExercise,
+        Boolean(exerciseCompletions[plannedExercise.exerciseId])
+      )
+    );
 
     const workoutLog = {
-      id: `log-${Date.now()}`,
+      id: `${workout.date}-${workout.id}`,
       workoutId: workout.id,
       title: workout.title,
       date: workout.date,
+      status: "completed",
       completedAt,
       notes,
+      exerciseCompletions: exerciseCompletionList,
       exercises: workout.exercises,
     };
 
-    const existingLogs = JSON.parse(
-      localStorage.getItem(WORKOUT_LOGS_KEY) || "[]"
-    );
+    const existingLogs = getWorkoutLogs();
 
-    localStorage.setItem(
-      WORKOUT_LOGS_KEY,
-      JSON.stringify([...existingLogs, workoutLog])
-    );
+    saveWorkoutLogs([
+      ...existingLogs.filter(
+        (log) => !(log.workoutId === workout.id && log.date === workout.date)
+      ),
+      workoutLog,
+    ]);
+
+    saveWorkoutRecord(workout, {
+      status: "completed",
+      completedAt,
+      notes,
+      exerciseCompletions: exerciseCompletionList,
+    });
 
     const updatedWorkout = {
       ...workout,
       status: "completed",
       completedAt,
+      notes,
+      exerciseCompletions: exerciseCompletionList,
     };
 
+    updateTemplateWorkoutExercises(workout.id, () => updatedExercises);
     saveUpdatedWorkout(updatedWorkout);
     alert("Workout marked as completed.");
   }
 
   function undoWorkoutCompleted() {
     if (!workout) return;
+    if (!isTodayOrPast(workout.date)) return;
   
     const updatedWorkout = {
       ...workout,
       status: "scheduled",
       completedAt: null,
+      exerciseCompletions: getExerciseCompletionList().map((item) => ({
+        ...item,
+        completed: false,
+      })),
     };
   
+    setExerciseCompletions(
+      Object.fromEntries(
+        updatedWorkout.exerciseCompletions.map((item) => [
+          item.exerciseId,
+          item.completed,
+        ])
+      )
+    );
     saveUpdatedWorkout(updatedWorkout);
   
-    const existingLogs = JSON.parse(
-      localStorage.getItem(WORKOUT_LOGS_KEY) || "[]"
-    );
+    const existingLogs = getWorkoutLogs();
   
     const updatedLogs = existingLogs.filter(
       (log) => !(log.workoutId === workout.id && log.date === workout.date)
     );
-  
-    localStorage.setItem(WORKOUT_LOGS_KEY, JSON.stringify(updatedLogs));
+
+    saveWorkoutLogs(updatedLogs);
+    removeWorkoutRecord(workout);
+
+    const remainingWorkoutLogs = updatedLogs
+      .filter((log) => log.workoutId === workout.id)
+      .sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+    const recalculatedExercises = recalculateProgressionFromLogs(
+      workout.exercises,
+      remainingWorkoutLogs
+    );
+
+    updateTemplateWorkoutExercises(workout.id, () => recalculatedExercises);
+    saveUpdatedWorkout({
+      ...updatedWorkout,
+      exercises: recalculatedExercises,
+    });
+  }
+
+  function applySuggestion(exerciseIndex) {
+    updateWorkoutExercises((exercises) =>
+      exercises.map((plannedExercise, index) =>
+        index === exerciseIndex
+          ? applyProgressionSuggestion(plannedExercise)
+          : plannedExercise
+      )
+    );
+  }
+
+  function keepSameTarget(exerciseIndex) {
+    updateWorkoutExercises((exercises) =>
+      exercises.map((plannedExercise, index) =>
+        index === exerciseIndex
+          ? dismissProgressionSuggestion(plannedExercise)
+          : plannedExercise
+      )
+    );
   }
 
   if (!workout) {
@@ -126,12 +270,21 @@ export default function WorkoutPage() {
             Go back to your schedule and choose a workout.
           </p>
 
-          <Link
-            href="/schedule"
-            className="mt-6 inline-block rounded-xl bg-primary px-6 py-3 font-semibold text-white transition hover:bg-primary-hover"
-          >
-            Back to schedule
-          </Link>
+          <div className="mt-6 flex flex-wrap gap-3">
+            <Link
+              href="/schedule"
+              className="rounded-xl bg-primary px-6 py-3 font-semibold text-white transition hover:bg-primary-hover"
+            >
+              Go to schedule
+            </Link>
+
+            <Link
+              href="/dashboard"
+              className="rounded-xl border border-border bg-card px-6 py-3 font-semibold text-foreground transition hover:border-primary"
+            >
+              Go to dashboard
+            </Link>
+          </div>
         </div>
       </main>
     );
@@ -168,6 +321,99 @@ export default function WorkoutPage() {
           </section>
         )}
 
+        {workout.status === "completed" && (
+          <section className="mt-8 rounded-2xl border border-border bg-card p-6 shadow-sm">
+            <h2 className="text-2xl font-semibold">What next?</h2>
+            <p className="mt-2 text-sm text-muted">
+              Review your progress, check the rest of your week, or compare
+              this session against the plan.
+            </p>
+
+            <div className="mt-5 flex flex-wrap gap-3">
+              <Link
+                href="/dashboard"
+                className="rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white transition hover:bg-primary-hover"
+              >
+                View dashboard
+              </Link>
+
+              <Link
+                href="/schedule"
+                className="rounded-xl border border-border bg-background px-5 py-3 text-sm font-semibold text-foreground transition hover:border-primary"
+              >
+                Back to schedule
+              </Link>
+
+              <Link
+                href="/plan"
+                className="rounded-xl border border-border bg-background px-5 py-3 text-sm font-semibold text-foreground transition hover:border-primary"
+              >
+                View plan
+              </Link>
+            </div>
+          </section>
+        )}
+
+        {workout.exercises.some(
+          (plannedExercise) => plannedExercise.progression?.pendingSuggestion
+        ) && (
+          <section className="mt-8 rounded-2xl border border-border bg-card p-6 shadow-sm">
+            <h2 className="text-2xl font-semibold">
+              Suggested updates for this workout
+            </h2>
+            <div className="mt-4 grid gap-4">
+              {workout.exercises.map((plannedExercise, index) => {
+                const suggestion =
+                  plannedExercise.progression?.pendingSuggestion;
+                const exercise = getExerciseById(plannedExercise.exerciseId);
+
+                if (!suggestion) return null;
+
+                return (
+                  <article
+                    key={`${plannedExercise.exerciseId}-${index}-suggestion`}
+                    className="rounded-xl border border-border bg-background p-4"
+                  >
+                    <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
+                      <div>
+                        <p className="font-semibold">
+                          {exercise ? exercise.name : plannedExercise.exerciseId}
+                        </p>
+                        <p className="mt-2 text-sm text-muted">
+                          Current: {getExerciseTargetText(plannedExercise)}
+                        </p>
+                        <p className="mt-1 text-sm text-muted">
+                          Suggested: {suggestion.to}
+                        </p>
+                        <p className="mt-2 text-sm text-muted">
+                          {suggestion.reason}
+                        </p>
+                      </div>
+
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => applySuggestion(index)}
+                          className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-primary-hover"
+                        >
+                          Apply
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => keepSameTarget(index)}
+                          className="rounded-lg border border-border bg-card px-4 py-2 text-sm font-semibold text-foreground transition hover:border-primary"
+                        >
+                          Keep same
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
         <section className="mt-8 grid gap-5">
           {workout.exercises.map((plannedExercise, index) => {
             const exercise = getExerciseById(plannedExercise.exerciseId);
@@ -175,10 +421,9 @@ export default function WorkoutPage() {
             const isAlternatesOpen =
               openAlternatesId === `${plannedExercise.exerciseId}-${index}`;
 
-            const validAlternates =
-              exercise?.alternatives
-                ?.map((alternateId) => getExerciseById(alternateId))
-                .filter(Boolean) || [];
+            const validAlternates = exercise
+              ? getTopAlternateExercises(exercise, profile, 3)
+              : [];
 
             return (
               <article
@@ -196,7 +441,7 @@ export default function WorkoutPage() {
                     </h2>
 
                     <p className="mt-2 text-muted">
-                      {plannedExercise.sets} sets • {plannedExercise.reps} reps
+                      {getExerciseTargetText(plannedExercise)}
                     </p>
 
                     {exercise && (
@@ -217,14 +462,32 @@ export default function WorkoutPage() {
                     )}
                   </div>
 
-                  {exercise && (
-                    <Link
-                      href={`/exercises/${exercise.id}`}
-                      className="rounded-xl border border-border bg-background px-4 py-2 text-center text-sm font-semibold text-foreground transition hover:border-primary"
+                  <div className="flex flex-col gap-2 sm:items-end">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        toggleExerciseCompleted(plannedExercise.exerciseId)
+                      }
+                      className={`rounded-xl border px-4 py-2 text-sm font-semibold transition ${
+                        exerciseCompletions[plannedExercise.exerciseId]
+                          ? "border-green-200 bg-green-100 text-green-700"
+                          : "border-border bg-background text-foreground hover:border-primary"
+                      }`}
                     >
-                      View full guide
-                    </Link>
-                  )}
+                      {exerciseCompletions[plannedExercise.exerciseId]
+                        ? "Completed"
+                        : "Mark exercise done"}
+                    </button>
+
+                    {exercise && (
+                      <Link
+                        href={`/exercises/${exercise.id}`}
+                        className="rounded-xl border border-border bg-background px-4 py-2 text-center text-sm font-semibold text-foreground transition hover:border-primary"
+                      >
+                        View full guide
+                      </Link>
+                    )}
+                  </div>
                 </div>
 
                 <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -370,24 +633,27 @@ export default function WorkoutPage() {
         </section>
 
         <div className="mt-8 flex justify-end">
-            {workout.status === "completed" ? (
-                <button
-                type="button"
-                onClick={undoWorkoutCompleted}
-                className="rounded-xl border border-border bg-card px-6 py-3 font-semibold text-foreground transition hover:border-primary"
-                >
-                Undo completed
-                </button>
-            ) : (
-                <button
-                type="button"
-                onClick={markWorkoutCompleted}
-                className="rounded-xl bg-primary px-6 py-3 font-semibold text-white transition hover:bg-primary-hover"
-                >
-                Mark workout completed
-                </button>
-            )}
-            </div>
+          {workout.status === "completed" ? (
+            <button
+              type="button"
+              onClick={undoWorkoutCompleted}
+              className="rounded-xl border border-border bg-card px-6 py-3 font-semibold text-foreground transition hover:border-primary"
+            >
+              Undo completed
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={completeWorkout}
+              disabled={!isTodayOrPast(workout.date)}
+              className="rounded-xl bg-primary px-6 py-3 font-semibold text-white transition hover:bg-primary-hover disabled:cursor-not-allowed disabled:bg-muted"
+            >
+              {isTodayOrPast(workout.date)
+                ? "Complete workout"
+                : "Not available yet"}
+            </button>
+          )}
+        </div>
       </div>
     </main>
   );

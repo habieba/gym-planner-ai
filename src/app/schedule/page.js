@@ -4,19 +4,18 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { getOnboardingData } from "@/lib/onboardingStorage";
-import { buildMockPlan } from "@/lib/mockPlan";
+import {
+  ACTIVE_WORKOUT_KEY,
+  buildWeekSchedule,
+  formatISODate,
+  getCompletionRecords,
+  getWeeklyPlanTemplate,
+  getWorkoutRecord,
+  isTodayOrPast,
+  removeWorkoutRecord,
+  saveWorkoutRecord,
+} from "@/lib/scheduleStorage";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-
-const SCHEDULE_STORAGE_KEY = "gym_scheduled_workouts";
-const ACTIVE_WORKOUT_KEY = "gym_active_workout";
-
-function formatISODate(date) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-  
-    return `${year}-${month}-${day}`;
-  }
 
 function getStartOfWeek(date = new Date()) {
   const copy = new Date(date);
@@ -80,55 +79,6 @@ function formatWeekRange(weekDates) {
     return `${startLabel} - ${endLabel}`;
   }
 
-function getNextDateForDay(dayName) {
-  const dayIndexMap = {
-    Sunday: 0,
-    Monday: 1,
-    Tuesday: 2,
-    Wednesday: 3,
-    Thursday: 4,
-    Friday: 5,
-    Saturday: 6,
-  };
-
-  const today = new Date();
-  const targetDayIndex = dayIndexMap[dayName];
-  const todayIndex = today.getDay();
-
-  let daysUntilTarget = targetDayIndex - todayIndex;
-
-  if (daysUntilTarget < 0) {
-    daysUntilTarget += 7;
-  }
-
-  const result = new Date(today);
-  result.setDate(today.getDate() + daysUntilTarget);
-
-  return formatISODate(result);
-}
-
-function getDurationInMinutes(duration) {
-  if (!duration) return 45;
-  if (duration.includes("30")) return 30;
-  if (duration.includes("45")) return 45;
-  if (duration.includes("60")) return 60;
-  if (duration.includes("75")) return 75;
-  return 60;
-}
-
-function addMinutesToTime(time, minutesToAdd) {
-  const [hours, minutes] = time.split(":").map(Number);
-
-  const date = new Date();
-  date.setHours(hours);
-  date.setMinutes(minutes + minutesToAdd);
-
-  const endHours = String(date.getHours()).padStart(2, "0");
-  const endMinutes = String(date.getMinutes()).padStart(2, "0");
-
-  return `${endHours}:${endMinutes}`;
-}
-
 function formatTime(time) {
   if (!time) return "";
 
@@ -142,59 +92,32 @@ function formatTime(time) {
   return `${displayHour}:${minute} ${period}`;
 }
 
-function createInitialSchedule(profile) {
-  const mockPlan = buildMockPlan(profile);
-
-  return mockPlan.map((workout) => {
-    const startTime = profile.preferredTime || "18:00";
-    const durationMinutes = getDurationInMinutes(workout.duration);
-
-    return {
-        ...workout,
-        date: getNextDateForDay(workout.day),
-        startTime,
-        endTime: addMinutesToTime(startTime, durationMinutes),
-        durationMinutes,
-        status: "scheduled",
-        profileVersion: profile.version || 0,
-      };
-  });
-}
-
 export default function SchedulePage() {
   const router = useRouter();
 
-  const [scheduledWorkouts, setScheduledWorkouts] = useState([]);
+  const [weeklyTemplate, setWeeklyTemplate] = useState([]);
+  const [completionRecords, setCompletionRecords] = useState({});
   const [editingWorkoutId, setEditingWorkoutId] = useState(null);
   const [currentWeekStart, setCurrentWeekStart] = useState(getStartOfWeek());
+  const [futureWorkoutMessageKey, setFutureWorkoutMessageKey] = useState("");
 
   const weekDates = getWeekDates(currentWeekStart);
+  const scheduledWorkouts = buildWeekSchedule(
+    weeklyTemplate,
+    weekDates,
+    completionRecords
+  );
 
   useEffect(() => {
     const profile = getOnboardingData();
-    const savedSchedule = localStorage.getItem(SCHEDULE_STORAGE_KEY);
-  
-    if (savedSchedule) {
-      const parsedSchedule = JSON.parse(savedSchedule);
-      const scheduleProfileVersion = parsedSchedule[0]?.profileVersion || 0;
-      const currentProfileVersion = profile.version || 0;
-  
-      if (scheduleProfileVersion === currentProfileVersion) {
-        setScheduledWorkouts(parsedSchedule);
-        return;
-      }
-    }
-  
-    const newSchedule = createInitialSchedule(profile);
-  
-    setScheduledWorkouts(newSchedule);
-    localStorage.setItem(SCHEDULE_STORAGE_KEY, JSON.stringify(newSchedule));
-  }, []);
 
-  function saveSchedule(nextSchedule) {
-    setScheduledWorkouts(nextSchedule);
-    localStorage.setItem(SCHEDULE_STORAGE_KEY, JSON.stringify(nextSchedule));
-  }
+    const timeoutId = window.setTimeout(() => {
+      setWeeklyTemplate(getWeeklyPlanTemplate(profile));
+      setCompletionRecords(getCompletionRecords());
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, []);
 
   function goToPreviousWeek() {
     setCurrentWeekStart((current) => addDays(current, -7));
@@ -208,53 +131,37 @@ export default function SchedulePage() {
     setCurrentWeekStart(getStartOfWeek());
   }
 
-  function updateWorkout(workoutId, field, value) {
-    const nextSchedule = scheduledWorkouts.map((workout) => {
-      if (workout.id !== workoutId) return workout;
+  function markMissed(workout) {
+    if (!isTodayOrPast(workout.date)) return;
 
-      const updatedWorkout = {
-        ...workout,
-        [field]: value,
-      };
-
-      if (field === "startTime" || field === "durationMinutes") {
-        const newStartTime =
-          field === "startTime" ? value : updatedWorkout.startTime;
-
-        const newDuration =
-          field === "durationMinutes"
-            ? Number(value)
-            : updatedWorkout.durationMinutes;
-
-        updatedWorkout.endTime = addMinutesToTime(newStartTime, newDuration);
-        updatedWorkout.durationMinutes = newDuration;
-      }
-
-      return updatedWorkout;
+    const nextRecords = saveWorkoutRecord(workout, {
+      status: "missed",
+      missedAt: new Date().toISOString(),
     });
 
-    saveSchedule(nextSchedule);
+    setCompletionRecords(nextRecords);
   }
 
-  function markMissed(workoutId) {
-    const nextSchedule = scheduledWorkouts.map((workout) =>
-      workout.id === workoutId ? { ...workout, status: "missed" } : workout
-    );
+  function undoWorkoutStatus(workout) {
+    const nextRecords = removeWorkoutRecord(workout);
 
-    saveSchedule(nextSchedule);
-  }
-
-  function undoMissed(workoutId) {
-    const nextSchedule = scheduledWorkouts.map((workout) =>
-      workout.id === workoutId ? { ...workout, status: "scheduled" } : workout
-    );
-
-    saveSchedule(nextSchedule);
+    setCompletionRecords(nextRecords);
   }
 
   function openWorkout(workout) {
+    if (!isTodayOrPast(workout.date)) {
+      setFutureWorkoutMessageKey(`${workout.date}-${workout.id}`);
+      return;
+    }
+
+    setFutureWorkoutMessageKey("");
+
+    const record = getWorkoutRecord(completionRecords, workout);
     const activeWorkout = {
       ...workout,
+      status: record?.status || workout.status,
+      completedAt: record?.completedAt || null,
+      notes: record?.notes || "",
       openedAt: new Date().toISOString(),
     };
 
@@ -378,11 +285,18 @@ export default function SchedulePage() {
                         </p>
 
                         {editingWorkoutId === workout.id ? (
-                          <EditWorkoutForm
-                            workout={workout}
-                            onChange={updateWorkout}
-                            onDone={() => setEditingWorkoutId(null)}
-                          />
+                          <div className="mt-4 rounded-xl border border-border bg-card p-3">
+                            <p className="text-sm font-medium text-muted">
+                              Weekly overrides are not enabled yet.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => setEditingWorkoutId(null)}
+                              className="mt-4 w-full rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white transition hover:bg-primary-hover"
+                            >
+                              Done
+                            </button>
+                          </div>
                         ) : (
                           <div className="mt-6 space-y-2">
                             <button
@@ -390,8 +304,16 @@ export default function SchedulePage() {
                               onClick={() => openWorkout(workout)}
                               className="w-full rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-primary-hover"
                             >
-                              Workout
+                              View workout
                             </button>
+
+                            {futureWorkoutMessageKey ===
+                              `${workout.date}-${workout.id}` && (
+                              <p className="rounded-xl border border-amber-200 bg-amber-100 px-3 py-2 text-xs font-medium text-amber-800">
+                                This workout is scheduled for {workout.date}.
+                                You can open it on the workout day.
+                              </p>
+                            )}
 
                             <button
                               type="button"
@@ -401,10 +323,18 @@ export default function SchedulePage() {
                               Reschedule
                             </button>
 
-                            {workout.status === "missed" ? (
+                            {workout.status === "completed" ? (
                               <button
                                 type="button"
-                                onClick={() => undoMissed(workout.id)}
+                                onClick={() => undoWorkoutStatus(workout)}
+                                className="w-full rounded-xl border border-border bg-card px-4 py-2 text-sm font-semibold text-muted transition hover:border-primary"
+                              >
+                                Undo completed
+                              </button>
+                            ) : workout.status === "missed" ? (
+                              <button
+                                type="button"
+                                onClick={() => undoWorkoutStatus(workout)}
                                 className="w-full rounded-xl border border-border bg-card px-4 py-2 text-sm font-semibold text-muted transition hover:border-primary"
                               >
                                 Undo missed
@@ -412,10 +342,13 @@ export default function SchedulePage() {
                             ) : (
                               <button
                                 type="button"
-                                onClick={() => markMissed(workout.id)}
-                                className="w-full rounded-xl border border-border bg-card px-4 py-2 text-sm font-semibold text-muted transition hover:border-primary"
+                                onClick={() => markMissed(workout)}
+                                className="w-full rounded-xl border border-border bg-card px-4 py-2 text-sm font-semibold text-muted transition hover:border-primary disabled:cursor-not-allowed disabled:opacity-60"
+                                disabled={!isTodayOrPast(workout.date)}
                               >
-                                Mark missed
+                                {isTodayOrPast(workout.date)
+                                  ? "Mark missed"
+                                  : "Not available yet"}
                               </button>
                             )}
                           </div>
@@ -457,56 +390,5 @@ function StatusBadge({ status }) {
     >
       {status.replace("_", " ")}
     </span>
-  );
-}
-
-function EditWorkoutForm({ workout, onChange, onDone }) {
-  return (
-    <div className="mt-4 rounded-xl border border-border bg-card p-3">
-      <label className="block">
-        <span className="text-xs font-medium text-muted">Date</span>
-        <input
-          type="date"
-          value={workout.date}
-          onChange={(e) => onChange(workout.id, "date", e.target.value)}
-          className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-        />
-      </label>
-
-      <label className="mt-3 block">
-        <span className="text-xs font-medium text-muted">Start time</span>
-        <input
-          type="time"
-          value={workout.startTime}
-          onChange={(e) => onChange(workout.id, "startTime", e.target.value)}
-          className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-        />
-      </label>
-
-      <label className="mt-3 block">
-        <span className="text-xs font-medium text-muted">Duration</span>
-        <select
-          value={workout.durationMinutes}
-          onChange={(e) =>
-            onChange(workout.id, "durationMinutes", e.target.value)
-          }
-          className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
-        >
-          <option value={30}>30 minutes</option>
-          <option value={45}>45 minutes</option>
-          <option value={60}>60 minutes</option>
-          <option value={75}>75 minutes</option>
-          <option value={90}>90 minutes</option>
-        </select>
-      </label>
-
-      <button
-        type="button"
-        onClick={onDone}
-        className="mt-4 w-full rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white transition hover:bg-primary-hover"
-      >
-        Done
-      </button>
-    </div>
   );
 }

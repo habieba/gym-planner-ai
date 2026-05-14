@@ -2,9 +2,12 @@
 import InfoTip from "@/components/InfoTip";
 
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { saveOnboardingData } from "@/lib/onboardingStorage";
+import {
+  getOnboardingData,
+  saveOnboardingData,
+} from "@/lib/onboardingStorage";
 
 const focusAreas = [
   "Full body",
@@ -21,6 +24,15 @@ const focusAreas = [
 export default function FocusPage() {
   const router = useRouter();
   const [selectedFocusAreas, setSelectedFocusAreas] = useState([]);
+
+  useEffect(() => {
+    const savedData = getOnboardingData();
+    const timeoutId = window.setTimeout(() => {
+      setSelectedFocusAreas(savedData.focusAreas || []);
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, []);
 
   function toggleFocus(area) {
     setSelectedFocusAreas((current) =>
@@ -43,10 +55,28 @@ export default function FocusPage() {
     router.push("/onboarding/experience");
   }
 
+  function handleExit() {
+    saveOnboardingData({
+      focusAreas: selectedFocusAreas,
+    });
+
+    router.push("/plan");
+  }
+
   return (
     <main className="min-h-screen bg-background px-6 py-10 text-foreground">
       <div className="mx-auto max-w-3xl">
-        <p className="text-sm font-semibold text-primary">Step 2 of 6</p>
+        <div className="flex justify-between">
+          <button
+            type="button"
+            onClick={handleExit}
+            className="text-sm font-semibold text-muted transition hover:text-primary"
+          >
+            Save and exit
+          </button>
+        </div>
+
+        <p className="mt-8 text-sm font-semibold text-primary">Step 2 of 6</p>
         <h1 className="mt-2 text-4xl font-bold">What do you want to focus on?</h1>
         <p className="mt-3 text-muted">
           This helps the plan prioritize the right muscle groups and training style.

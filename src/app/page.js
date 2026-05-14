@@ -1,6 +1,29 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
 
+const ONBOARDING_KEY = "gym_onboarding";
+const SCHEDULE_KEY = "gym_scheduled_workouts";
+
 export default function Home() {
+  const [hasOnboarding, setHasOnboarding] = useState(false);
+  const [hasSchedule, setHasSchedule] = useState(false);
+  const [isLoaded, setIsLoaded] = useState(false);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      const savedOnboarding = localStorage.getItem(ONBOARDING_KEY);
+      const savedSchedule = localStorage.getItem(SCHEDULE_KEY);
+
+      setHasOnboarding(Boolean(savedOnboarding));
+      setHasSchedule(Boolean(savedSchedule));
+      setIsLoaded(true);
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, []);
+
   return (
     <main className="min-h-screen bg-background text-foreground">
       <section className="mx-auto flex min-h-screen max-w-6xl flex-col items-center justify-center px-6 text-center">
@@ -19,19 +42,48 @@ export default function Home() {
         </p>
 
         <div className="mt-10 flex flex-col gap-4 sm:flex-row">
-          <Link
-            href="/onboarding"
-            className="rounded-xl bg-primary px-6 py-3 font-semibold text-white shadow-sm transition hover:bg-primary-hover"
-          >
-            Start planning
-          </Link>
+          {hasOnboarding ? (
+            <>
+              <Link
+                href="/dashboard"
+                className="rounded-xl bg-primary px-6 py-3 font-semibold text-white shadow-sm transition hover:bg-primary-hover"
+              >
+                Continue to dashboard
+              </Link>
 
-          <Link
-            href="/dashboard"
-            className="rounded-xl border border-border bg-card px-6 py-3 font-semibold text-foreground shadow-sm transition hover:bg-background"
-          >
-            View dashboard
-          </Link>
+              <Link
+                href="/schedule"
+                className="rounded-xl border border-border bg-card px-6 py-3 font-semibold text-foreground shadow-sm transition hover:bg-background"
+              >
+                View schedule
+              </Link>
+
+              <Link
+                href="/onboarding/goal"
+                className="rounded-xl border border-border bg-card px-6 py-3 font-semibold text-muted shadow-sm transition hover:bg-background hover:text-foreground"
+              >
+                Edit quiz
+              </Link>
+            </>
+          ) : (
+            <>
+              <Link
+                href="/onboarding"
+                className="rounded-xl bg-primary px-6 py-3 font-semibold text-white shadow-sm transition hover:bg-primary-hover"
+              >
+                Start planning
+              </Link>
+
+              {isLoaded && hasSchedule && (
+                <Link
+                  href="/schedule"
+                  className="rounded-xl border border-border bg-card px-6 py-3 font-semibold text-foreground shadow-sm transition hover:bg-background"
+                >
+                  View schedule
+                </Link>
+              )}
+            </>
+          )}
         </div>
       </section>
     </main>

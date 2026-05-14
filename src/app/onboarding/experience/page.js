@@ -1,8 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { saveOnboardingData } from "@/lib/onboardingStorage";
+import {
+  getOnboardingData,
+  saveOnboardingData,
+} from "@/lib/onboardingStorage";
 import InfoTip from "@/components/InfoTip";
 
 const experienceLevels = [
@@ -15,6 +18,15 @@ const experienceLevels = [
 export default function ExperiencePage() {
   const router = useRouter();
   const [experienceLevel, setExperienceLevel] = useState("");
+
+  useEffect(() => {
+    const savedData = getOnboardingData();
+    const timeoutId = window.setTimeout(() => {
+      setExperienceLevel(savedData.experienceLevel || "");
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, []);
 
   function handleNext() {
     if (!experienceLevel) {
@@ -29,10 +41,28 @@ export default function ExperiencePage() {
     router.push("/onboarding/schedule");
   }
 
+  function handleExit() {
+    saveOnboardingData({
+      experienceLevel,
+    });
+
+    router.push("/plan");
+  }
+
   return (
     <main className="min-h-screen bg-background px-6 py-10 text-foreground">
       <div className="mx-auto max-w-3xl">
-        <p className="text-sm font-semibold text-primary">Step 3 of 6</p>
+        <div className="flex justify-between">
+          <button
+            type="button"
+            onClick={handleExit}
+            className="text-sm font-semibold text-muted transition hover:text-primary"
+          >
+            Save and exit
+          </button>
+        </div>
+
+        <p className="mt-8 text-sm font-semibold text-primary">Step 3 of 6</p>
         <h1 className="mt-2 text-4xl font-bold">
           What is your experience level?
         </h1>

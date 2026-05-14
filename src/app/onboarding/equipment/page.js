@@ -1,8 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { saveOnboardingData } from "@/lib/onboardingStorage";
+import {
+  getOnboardingData,
+  saveOnboardingData,
+} from "@/lib/onboardingStorage";
 import InfoTip from "@/components/InfoTip";
 
 const trainingLocations = [
@@ -17,6 +20,15 @@ export default function EquipmentPage() {
   const router = useRouter();
   const [trainingLocation, setTrainingLocation] = useState("");
 
+  useEffect(() => {
+    const savedData = getOnboardingData();
+    const timeoutId = window.setTimeout(() => {
+      setTrainingLocation(savedData.trainingLocation || "");
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, []);
+
   function handleNext() {
     if (!trainingLocation) {
       alert("Choose where you will usually train.");
@@ -30,10 +42,28 @@ export default function EquipmentPage() {
     router.push("/onboarding/limitations");
   }
 
+  function handleExit() {
+    saveOnboardingData({
+      trainingLocation,
+    });
+
+    router.push("/plan");
+  }
+
   return (
     <main className="min-h-screen bg-background px-6 py-10 text-foreground">
       <div className="mx-auto max-w-3xl">
-        <p className="text-sm font-semibold text-primary">Step 5 of 6</p>
+        <div className="flex justify-between">
+          <button
+            type="button"
+            onClick={handleExit}
+            className="text-sm font-semibold text-muted transition hover:text-primary"
+          >
+            Save and exit
+          </button>
+        </div>
+
+        <p className="mt-8 text-sm font-semibold text-primary">Step 5 of 6</p>
         <h1 className="mt-2 text-4xl font-bold">Where will you train?</h1>
         <p className="mt-3 text-muted">
           The plan will start with your usual training location. Later, you will

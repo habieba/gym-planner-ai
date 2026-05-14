@@ -2,9 +2,12 @@
 import InfoTip from "@/components/InfoTip";
 
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { saveOnboardingData } from "@/lib/onboardingStorage";
+import {
+  getOnboardingData,
+  saveOnboardingData,
+} from "@/lib/onboardingStorage";
 
 const primaryGoals = [
   "Build muscle",
@@ -33,6 +36,17 @@ export default function GoalPage() {
   const [selectedSecondaryGoals, setSelectedSecondaryGoals] = useState([]);
   const [goalDescription, setGoalDescription] = useState("");
 
+  useEffect(() => {
+    const savedData = getOnboardingData();
+    const timeoutId = window.setTimeout(() => {
+      setPrimaryGoal(savedData.primaryGoal || "");
+      setSelectedSecondaryGoals(savedData.secondaryGoals || []);
+      setGoalDescription(savedData.goalDescription || "");
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, []);
+
   function toggleSecondaryGoal(goal) {
     setSelectedSecondaryGoals((current) =>
       current.includes(goal)
@@ -56,10 +70,30 @@ export default function GoalPage() {
     router.push("/onboarding/focus");
   }
 
+  function handleExit() {
+    saveOnboardingData({
+      primaryGoal,
+      secondaryGoals: selectedSecondaryGoals,
+      goalDescription,
+    });
+
+    router.push("/plan");
+  }
+
   return (
     <main className="min-h-screen bg-background px-6 py-10 text-foreground">
       <div className="mx-auto max-w-3xl">
-        <p className="text-sm font-semibold text-primary">Step 1 of 6</p>
+        <div className="flex justify-between">
+          <button
+            type="button"
+            onClick={handleExit}
+            className="text-sm font-semibold text-muted transition hover:text-primary"
+          >
+            Save and exit
+          </button>
+        </div>
+
+        <p className="mt-8 text-sm font-semibold text-primary">Step 1 of 6</p>
         <h1 className="mt-2 text-4xl font-bold">What is your goal?</h1>
         <p className="mt-3 text-muted">
           Start with your main goal, then add any extra details you care about.

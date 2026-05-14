@@ -2,9 +2,12 @@
 import InfoTip from "@/components/InfoTip";
 
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { saveOnboardingData, getOnboardingData } from "@/lib/onboardingStorage";
+import {
+  getOnboardingData,
+  saveOnboardingData,
+} from "@/lib/onboardingStorage";
 
 export default function LimitationsPage() {
   const router = useRouter();
@@ -12,6 +15,17 @@ export default function LimitationsPage() {
   const [limitations, setLimitations] = useState("");
   const [dislikedExercises, setDislikedExercises] = useState("");
   const [extraNotes, setExtraNotes] = useState("");
+
+  useEffect(() => {
+    const savedData = getOnboardingData();
+    const timeoutId = window.setTimeout(() => {
+      setLimitations(savedData.limitations || "");
+      setDislikedExercises(savedData.dislikedExercises || "");
+      setExtraNotes(savedData.extraNotes || "");
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, []);
 
   function handleFinish() {
     saveOnboardingData({
@@ -25,10 +39,30 @@ export default function LimitationsPage() {
     router.push("/plan");
   }
 
+  function handleExit() {
+    saveOnboardingData({
+      limitations,
+      dislikedExercises,
+      extraNotes,
+    });
+
+    router.push("/plan");
+  }
+
   return (
     <main className="min-h-screen bg-background px-6 py-10 text-foreground">
       <div className="mx-auto max-w-3xl">
-        <p className="text-sm font-semibold text-primary">Step 6 of 6</p>
+        <div className="flex justify-between">
+          <button
+            type="button"
+            onClick={handleExit}
+            className="text-sm font-semibold text-muted transition hover:text-primary"
+          >
+            Save and exit
+          </button>
+        </div>
+
+        <p className="mt-8 text-sm font-semibold text-primary">Step 6 of 6</p>
         <h1 className="mt-2 text-4xl font-bold">Anything we should avoid?</h1>
         <p className="mt-3 text-muted">
           This helps make the plan safer and more realistic.

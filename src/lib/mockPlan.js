@@ -1,3 +1,31 @@
+import { createPlannedExercise } from "./progressionHelpers.js";
+
+const exerciseTargets = {
+  "goblet-squat": { targetWeight: 25 },
+  "dumbbell-bench-press": { targetWeight: 20 },
+  "lat-pulldown": { targetWeight: 50 },
+  "romanian-deadlift": { targetWeight: 45 },
+  "bench-press": { targetWeight: 45 },
+  "seated-row": { targetWeight: 50 },
+  "shoulder-press": { targetWeight: 15 },
+  "bicep-curl": { targetWeight: 10, maxWeightCap: 40 },
+  squat: { targetWeight: 45 },
+  "leg-press": { targetWeight: 90 },
+  "hamstring-curl": { targetWeight: 40 },
+  "calf-raise": { targetWeight: 40 },
+  "hip-thrust": { targetWeight: 65 },
+  "walking-lunge": { targetWeight: 10 },
+  "cable-kickback": { targetWeight: 10, maxWeightCap: 60 },
+  "bulgarian-split-squat": { targetWeight: 10 },
+  "ab-crunch-machine": { targetWeight: 30 },
+  "cable-crunch": { targetWeight: 30 },
+  "lateral-raise": { targetWeight: 8, maxWeightCap: 30 },
+  "tricep-pushdown": { targetWeight: 30, maxWeightCap: 100 },
+  "face-pull": { targetWeight: 25 },
+  "rear-delt-fly": { targetWeight: 10 },
+  "farmer-carry": { targetWeight: 25 },
+};
+
 export function chooseWorkoutLength(preference) {
     if (!preference) return "45 minutes";
   
@@ -10,21 +38,45 @@ export function chooseWorkoutLength(preference) {
   }
   
   function makeExercise(exerciseId, sets, reps) {
-    return {
-      exerciseId,
-      sets,
-      reps,
-    };
+    const target = exerciseTargets[exerciseId] || {};
+
+    return createPlannedExercise(exerciseId, sets, reps, {
+      targetWeight: target.targetWeight ?? null,
+      weightUnit: target.targetWeight === undefined ? null : "lb",
+      progression: {
+        maxWeightCap: target.maxWeightCap || 200,
+      },
+    });
   }
   
   export function buildMockPlan(profile = {}) {
-    const daysPerWeek = Number(profile.daysPerWeek || 3);
+    const daysPerWeek = Math.min(Math.max(Number(profile.daysPerWeek || 3), 1), 7);
     const availableDays = profile.availableDays || [];
-    const selectedDays = availableDays.slice(0, daysPerWeek);
     const workoutLength = chooseWorkoutLength(profile.workoutLengthPreference);
   
-    const fallbackDays = ["Monday", "Wednesday", "Friday"];
-    const finalDays = selectedDays.length > 0 ? selectedDays : fallbackDays;
+    const weekDays = [
+      "Monday",
+      "Tuesday",
+      "Wednesday",
+      "Thursday",
+      "Friday",
+      "Saturday",
+      "Sunday",
+    ];
+    const defaultTrainingDays = [
+      "Monday",
+      "Wednesday",
+      "Friday",
+      "Tuesday",
+      "Thursday",
+      "Saturday",
+      "Sunday",
+    ];
+    const selectedDays = availableDays.filter((day) => weekDays.includes(day));
+    const fillDays = defaultTrainingDays.filter(
+      (day) => !selectedDays.includes(day)
+    );
+    const finalDays = [...selectedDays, ...fillDays].slice(0, daysPerWeek);
   
     const goal = profile.primaryGoal || "General fitness";
     const focusAreas = profile.focusAreas || [];
